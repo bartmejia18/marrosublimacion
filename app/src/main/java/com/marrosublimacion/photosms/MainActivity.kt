@@ -9,17 +9,20 @@ import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.RectF
-import androidx.exifinterface.media.ExifInterface
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.util.Log
+import android.view.Surface
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.annotation.DrawableRes
+import androidx.annotation.RequiresApi
+import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -27,6 +30,7 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -39,10 +43,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -54,9 +61,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -64,12 +74,19 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.createBitmap
+import androidx.core.graphics.scale
+import androidx.core.graphics.withSave
+import androidx.exifinterface.media.ExifInterface
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.rememberAsyncImagePainter
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.PermissionStatus
@@ -79,9 +96,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.OutputStream
-import androidx.core.graphics.createBitmap
-import androidx.core.graphics.scale
-import androidx.lifecycle.viewmodel.compose.viewModel
+import java.util.Calendar
 
 
 class MainActivity : ComponentActivity() {
@@ -106,6 +121,8 @@ class MainActivity : ComponentActivity() {
 
             val scope = rememberCoroutineScope()
 
+            var codeText by remember { mutableIntStateOf(0) }
+
             RequestPermission(
                 permission = android.Manifest.permission.CAMERA,
                 rationale = "The app needs access to the camera to take photos.",
@@ -121,77 +138,123 @@ class MainActivity : ComponentActivity() {
             }
 
             if (hasCameraPermission && savedUri == null) {
-
-                Column(modifier = Modifier.padding(top = 48.dp)) {
-
-                    Row(
-                        modifier = Modifier
-                            .padding(16.dp)
-                            .height(40.dp)
-                            .fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
+                /*if (codeText != calculateCode()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(), // Ocupa toda la pantalla
+                        contentAlignment = Alignment.Center
                     ) {
-                        ToggleOption(
-                            text = "Medalla",
-                            isSelected = selectedOption == Option.Option1,
-                            onClick = { selectedOption = Option.Option1 }
-                        )
-                        ToggleOption(
-                            text = "Banda",
-                            isSelected = selectedOption == Option.Option2,
-                            onClick = { selectedOption = Option.Option2 }
+                        OutlinedTextField(
+                            value = if (codeText == 0) "" else codeText.toString(),
+                            onValueChange = { newValue ->
+                                codeText = newValue.toIntOrNull() ?: 0
+                            },
+                            label = { Text("Ingresar código") },
+                            placeholder = { Text("1234") },
+                            singleLine = true,
+                            modifier = Modifier.width(250.dp),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                         )
                     }
+                } else {*/
+                    Column(modifier = Modifier.padding(top = 58.dp)) {
+
+                        Row(
+                            modifier = Modifier
+                                .padding(top = 36.dp)
+                                .height(40.dp)
+                                .fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            ToggleOption(
+                                text = "Medalla",
+                                isSelected = selectedOption == Option.Option1,
+                                onClick = { selectedOption = Option.Option1 }
+                            )
+                            ToggleOption(
+                                text = "Banda",
+                                isSelected = selectedOption == Option.Option2,
+                                onClick = { selectedOption = Option.Option2 }
+                            )
+                        }
 
 
-                    CameraViewFramedRect (
-                        viewModel = cameraVM
-                    ) { orientedBitmap, pa ->
-
-                        // 1) Obtener el recorte tal como se ve en el preview
-                        val recorte = cropToFrameRectAsPreview(
-                            context = context,
-                            photo = orientedBitmap,                 // viene del callback de la cámara
-                            frameRes = R.drawable.marco_final,
-                            rectPerc = RECT_MARCO
-                        )
-
-                        // 2) Compón dentro del PNG del marco con FONDO TRANSPARENTE
-                        val compuestoTransp = composeCroppedIntoFrame(
-                            context = context,
-                            cropped = recorte,
+                        CameraViewHybrid(
+                            option = selectedOption,
+                            viewModel = cameraVM,
                             frameRes = R.drawable.marco_final,
                             rectPerc = RECT_MARCO,
-                            backgroundColor = null
-                        )
+                            circlePerc = CIRCLE_DEFAULT,
+                            ringWidthDp = 6.dp
+                        ) { orientedBitmap, _ ->
 
-                        // 3) Recorta orillas por transparencia (ajusta alphaThreshold/padPx si quieres)
-                        val compacto = trimTransparentBorders(
-                            src = compuestoTransp,
-                            alphaThreshold = 10,   // 5–15 normalmente bien
-                            padPx = 0              // deja 2–4 si quieres un mini margen
-                        )
+                            val finalBitmap = when (selectedOption) {
+                                Option.Option1 -> { // Medalla (círculo)
+                                    composeCircleWysiwyg(
+                                        photo = orientedBitmap,
+                                        circle = CIRCLE_DEFAULT,
+                                        outSizePx = minOf(
+                                            orientedBitmap.width,
+                                            orientedBitmap.height
+                                        ),
+                                        ringWidthPx = 18,
+                                        backgroundColorInt = android.graphics.Color.WHITE
+                                    )
+                                }
 
-                        // 4) (Opcional) Fondo blanco final
-                        val finalBitmap = overBackground(compacto, android.graphics.Color.WHITE)
-                        val finalWithCode = drawCodeTopRightText(finalBitmap, storedPhotoNumber + 1)
+                                Option.Option2 -> {
+                                    // 1) Obtener el recorte tal como se ve en el preview
+                                    val recorte = cropToFrameRectAsPreview(
+                                        context = context,
+                                        photo = orientedBitmap,                 // viene del callback de la cámara
+                                        frameRes = R.drawable.marco_final,
+                                        rectPerc = RECT_MARCO
+                                    )
 
-                        // 3) Guardar
-                        savedUri = saveImageToGallery(
-                            context,
-                            finalWithCode,
-                            storedPhotoNumber,
-                            dataStoreManager,
-                            scope
-                        )
-                        if (savedUri == null) {
-                            Toast.makeText(
+                                    // 2) Compón dentro del PNG del marco con FONDO TRANSPARENTE
+                                    val compuestoTransp = composeCroppedIntoFrame(
+                                        context = context,
+                                        cropped = recorte,
+                                        frameRes = R.drawable.marco_final,
+                                        rectPerc = RECT_MARCO,
+                                        backgroundColor = null
+                                    )
+
+                                    // 3) Recorta orillas por transparencia (ajusta alphaThreshold/padPx si quieres)
+                                    val compacto = trimTransparentBorders(
+                                        src = compuestoTransp,
+                                        alphaThreshold = 10,   // 5–15 normalmente bien
+                                        padPx = 0              // deja 2–4 si quieres un mini margen
+                                    )
+
+                                    overBackground(compacto, android.graphics.Color.WHITE)
+                                }
+                            }
+
+
+                            // 4) (Opcional) Fondo blanco final
+                            val finalWithCode = drawCodeTopRightText(
+                                finalBitmap,
+                                storedPhotoNumber + 1,
+                                selectedOption
+                            )
+
+                            // 3) Guardar
+                            savedUri = saveImageToGallery(
                                 context,
-                                "No se pudo guardar la imagen",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                                finalWithCode,
+                                storedPhotoNumber,
+                                dataStoreManager,
+                                scope
+                            )
+                            if (savedUri == null) {
+                                Toast.makeText(
+                                    context,
+                                    "No se pudo guardar la imagen",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
                         }
-                    }
+                   // }
                 }
             }
 
@@ -204,6 +267,15 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    fun calculateCode(): Int {
+        val calendar = Calendar.getInstance()
+        val year = calendar.get(Calendar.YEAR)
+        val month = calendar.get(Calendar.MONTH) + 1
+        val day = calendar.get(Calendar.DAY_OF_MONTH)
+
+        return (year + month) + (day * day * 2)
     }
 }
 
@@ -263,11 +335,17 @@ fun ShowDataPhoto(
 
 data class RectPerc(val left: Float, val top: Float, val right: Float, val bottom: Float)
 
+@RequiresApi(Build.VERSION_CODES.R)
 @Composable
-fun CameraViewFramedRect(
+fun CameraViewHybrid(
+    option: Option,                          // Option1 = Medalla (círculo), Option2 = Banda (marco)
+    viewModel: CameraViewModel = viewModel(),
     @DrawableRes frameRes: Int = R.drawable.marco_final,
-    viewModel: CameraViewModel = viewModel(),// tu PNG
-    onImageCaptured: (Bitmap, String) -> Unit
+    rectPerc: RectPerc = RECT_MARCO,
+    circlePerc: RectPerc = CIRCLE_DEFAULT,
+    ringColor: Color = Color(0xFF2AA7F0),
+    ringWidthDp: Dp = 6.dp,
+    onImageCaptured: (Bitmap, String) -> Unit // Bitmap orientado + path del JPG
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -275,42 +353,62 @@ fun CameraViewFramedRect(
     val flashMode = viewModel.flashMode
 
     val cameraProviderFuture = remember { ProcessCameraProvider.getInstance(context) }
-    val preview = remember { Preview.Builder().build() }
+
+    val rotation = context.display?.rotation ?: Surface.ROTATION_0
+    val preview = remember {
+        Preview.Builder()
+            .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+            .setTargetRotation(rotation)
+            .build()
+    }
     var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
+
     val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
-    // Relación de aspecto del PNG para no deformarlo
-    val frameBitmap = ImageBitmap.imageResource(context.resources, frameRes)
-    val frameAspect = frameBitmap.width.toFloat() / frameBitmap.height
+    // Para “Banda” usamos el aspect ratio del PNG; para “Medalla” un contenedor cuadrado
+    val frameBitmap: ImageBitmap? =
+        if (option == Option.Option2) ImageBitmap.imageResource(
+            context.resources,
+            frameRes
+        ) else null
 
-    // Rectángulo medido en tu marco (ajústalo si cambias de PNG)
-    val rectPerc = remember { RECT_MARCO }
+    val containerAspect =
+        if (option == Option.Option2 && frameBitmap != null)
+            frameBitmap.width.toFloat() / frameBitmap.height
+        else 1f
 
-    // Shape que recorta SOLO el rectángulo interior
-    val maskShape = remember(rectPerc) {
+    // Shape de recorte (rectángulo o círculo)
+    val maskShape = remember(option, rectPerc, circlePerc) {
         GenericShape { size, _ ->
-            val l = size.width * rectPerc.left
-            val t = size.height * rectPerc.top
-            val r = size.width * rectPerc.right
-            val b = size.height * rectPerc.bottom
-            addRect(Rect(l, t, r, b))
+            val (l, t, r, b) = if (option == Option.Option2) {
+                val l = size.width * rectPerc.left
+                val t = size.height * rectPerc.top
+                val r = size.width * rectPerc.right
+                val b = size.height * rectPerc.bottom
+                listOf(l, t, r, b)
+            } else {
+                val l = size.width * circlePerc.left
+                val t = size.height * circlePerc.top
+                val r = size.width * circlePerc.right
+                val b = size.height * circlePerc.bottom
+                listOf(l, t, r, b)
+            }
+            if (option == Option.Option2) addRect(Rect(l, t, r, b)) else addOval(Rect(l, t, r, b))
         }
     }
 
     var camera by remember { mutableStateOf<Camera?>(null) }
 
-    LaunchedEffect(flashMode) {
-        // Asegura que la linterna esté apagada cuando uses FLASH_MODE_*
-        camera?.cameraControl?.enableTorch(false)
-        imageCapture?.flashMode = flashMode
-    }
-
-
     Box(Modifier.fillMaxSize()) {
+
+        LaunchedEffect(flashMode) {
+            // Asegura que la linterna esté apagada cuando uses FLASH_MODE_*
+            camera?.cameraControl?.enableTorch(false)
+            imageCapture?.flashMode = flashMode
+        }
 
         Row(
             modifier = Modifier
-                .padding(5.dp)
                 .height(40.dp)
                 .fillMaxWidth(),
             horizontalArrangement = Arrangement.Center
@@ -318,76 +416,89 @@ fun CameraViewFramedRect(
             Button(onClick = {
                 val next = when (flashMode) {
                     ImageCapture.FLASH_MODE_AUTO -> ImageCapture.FLASH_MODE_ON
-                    ImageCapture.FLASH_MODE_ON   -> ImageCapture.FLASH_MODE_OFF
-                    else                         -> ImageCapture.FLASH_MODE_AUTO
+                    ImageCapture.FLASH_MODE_ON -> ImageCapture.FLASH_MODE_OFF
+                    else -> ImageCapture.FLASH_MODE_AUTO
                 }
                 viewModel.setFlash(next)
-            }) { Text("Flash: " + when(flashMode){
-                ImageCapture.FLASH_MODE_ON -> "ON"
-                ImageCapture.FLASH_MODE_OFF -> "OFF"
-                else -> "AUTO"
-            }) }
+            }) {
+                Text(
+                    "Flash: " + when (flashMode) {
+                        ImageCapture.FLASH_MODE_ON -> "ON"
+                        ImageCapture.FLASH_MODE_OFF -> "OFF"
+                        else -> "AUTO"
+                    }
+                )
+            }
         }
 
-        // Contenedor con el mismo aspect ratio que el PNG
+        // Contenedor del visor (blanco debajo para que “lo de afuera” se vea blanco)
         Box(
-            modifier = Modifier
+            Modifier
                 .fillMaxWidth()
-                .padding(top = 30.dp, bottom = 50.dp)
-                .aspectRatio(frameAspect)
+                .padding(top = 40.dp, bottom = 50.dp)
+                .aspectRatio(containerAspect)
                 .align(Alignment.TopCenter)
+                .background(Color.White)
         ) {
-            // 1) Cámara — recortada al rectángulo
+            // 1) Cámara recortada al shape
             AndroidView(
                 modifier = Modifier
                     .matchParentSize()
-                    .graphicsLayer {
-                        // IMPORTANTE: esto hace el clip al rectángulo
-                        clip = true
-                        shape = maskShape
-                    },
+                    .graphicsLayer { clip = true; shape = maskShape },
                 factory = { ctx ->
                     val previewView = PreviewView(ctx).apply {
-                        // Usa TextureView para que el clip funcione en todos lados
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                        // Llenar manteniendo centro (como center-crop)
                         scaleType = PreviewView.ScaleType.FILL_CENTER
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                     }
                     cameraProviderFuture.addListener({
                         val provider = cameraProviderFuture.get()
                         provider.unbindAll()
-
                         imageCapture = ImageCapture.Builder()
+                            .setTargetAspectRatio(AspectRatio.RATIO_4_3)
+                            .setTargetRotation(rotation)
                             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-                            .setFlashMode(flashMode) // modo inicial
                             .build()
-
-                        // bind y guarda la referencia
-                        camera = provider.bindToLifecycle(
+                        provider.bindToLifecycle(
                             lifecycleOwner,
-                            cameraSelector,
+                            CameraSelector.DEFAULT_BACK_CAMERA,
                             preview,
                             imageCapture
                         )
-
                         preview.setSurfaceProvider(previewView.surfaceProvider)
                     }, ContextCompat.getMainExecutor(ctx))
                     previewView
                 }
             )
 
-            // 2) Marco por encima (no se deforma)
-            Image(
-                painter = painterResource(frameRes),
-                contentDescription = null,
-                contentScale = ContentScale.FillBounds,
-                modifier = Modifier
+            // 2) Overlay: marco PNG o aro
+            if (option == Option.Option2) {
+                Image(
+                    painter = painterResource(frameRes),
+                    contentDescription = null,
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier
+                        .matchParentSize()
+                        .zIndex(1f)
+                )
+            } else {
+                Canvas(Modifier
                     .matchParentSize()
-                    .zIndex(1f)
-            )
+                    .zIndex(1f)) {
+                    val l = size.width * circlePerc.left
+                    val t = size.height * circlePerc.top
+                    val r = size.width * circlePerc.right
+                    val b = size.height * circlePerc.bottom
+                    drawOval(
+                        color = ringColor,
+                        style = Stroke(width = ringWidthDp.toPx()),
+                        topLeft = Offset(l, t),
+                        size = Size(r - l, b - t)
+                    )
+                }
+            }
         }
 
-        // Disparador
+        // Botón disparador
         Button(
             onClick = {
                 val file = File(context.cacheDir, "${System.currentTimeMillis()}.jpg")
@@ -403,7 +514,7 @@ fun CameraViewFramedRect(
                         }
 
                         override fun onError(ex: ImageCaptureException) {
-                            Log.e("CameraView", "Photo capture failed: ${ex.message}", ex)
+                            Log.e("CameraViewHybrid", "capture failed: ${ex.message}", ex)
                         }
                     }
                 )
@@ -589,7 +700,12 @@ fun cropToFrameRectAsPreview(
 
     // Rectángulo interno del marco (en píxeles)
     val rectOnFrame =
-        RectF(width * rectPerc.left, height * rectPerc.top, width * rectPerc.right, height* rectPerc.bottom)
+        RectF(
+            width * rectPerc.left,
+            height * rectPerc.top,
+            width * rectPerc.right,
+            height * rectPerc.bottom
+        )
 
     // Salida: exactamente el tamaño del rectángulo
     val outW = rectOnFrame.width().toInt()
@@ -611,9 +727,9 @@ fun cropToFrameRectAsPreview(
 }
 
 private val RECT_MARCO = RectPerc(
-    left   = 0.237f,   // ~col 420 px
-    top    = 0.076f,   // ~fila 134 px
-    right  = 0.832f,   // ~col 1474 px
+    left = 0.237f,   // ~col 420 px
+    top = 0.076f,   // ~fila 134 px
+    right = 0.832f,   // ~col 1474 px
     bottom = 0.925f
 )
 
@@ -709,30 +825,28 @@ fun overBackground(src: Bitmap, color: Int = 0xFFFFFFFF.toInt()): Bitmap {
 }
 
 
-fun drawCodeTopRightText(base: Bitmap, code: Int): Bitmap {
+fun drawCodeTopRightText(base: Bitmap, code: Int, optionSelected: Option): Bitmap {
     val bmp = base.copy(base.config, true)
     val c = Canvas(bmp)
 
     val text = "$code"
 
     // Tamaños proporcionales al alto del bitmap
-    val margin = (bmp.height * 0.03f)
-    val textSize = (bmp.height * 0.05f)
-    val strokeW = (bmp.height * 0.006f)
+    val margin = when (optionSelected) {
+        Option.Option1 -> (bmp.height * 0.15f)
+        Option.Option2 -> (bmp.height * 0.02f)
+    }
+    val textSize = (bmp.height * 0.04f)
 
     // Pintura de relleno (blanco, negrita)
-    val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-        color = android.graphics.Color.WHITE
-        this.textSize = textSize
-        typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
-        textAlign = android.graphics.Paint.Align.RIGHT
-    }
-
-    // Pintura de contorno (negro)
-    val stroke = android.graphics.Paint(fill).apply {
-        style = android.graphics.Paint.Style.STROKE
-        strokeWidth = strokeW
+    val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = android.graphics.Color.BLACK
+        this.textSize = textSize
+        typeface = android.graphics.Typeface.create(
+            android.graphics.Typeface.DEFAULT,
+            android.graphics.Typeface.BOLD
+        )
+        textAlign = Paint.Align.RIGHT
     }
 
     // Cálculo de baseline: alinear la “parte superior” a margin
@@ -742,7 +856,6 @@ fun drawCodeTopRightText(base: Bitmap, code: Int): Bitmap {
     val y = margin + topToBaseline
 
     // Dibuja contorno y luego relleno
-    c.drawText(text, x, y, stroke)
     c.drawText(text, x, y, fill)
 
     return bmp
@@ -772,7 +885,7 @@ fun composeCircleWysiwyg(
 ): Bitmap {
     val outW = outSizePx
     val outH = outSizePx
-    val result = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+    val result = createBitmap(outW, outH)
     val c = Canvas(result)
 
     // fondo (blanco o transparente)
@@ -783,15 +896,17 @@ fun composeCircleWysiwyg(
     val t = outH * circle.top
     val r = outW * circle.right
     val b = outH * circle.bottom
-    val circleRect = android.graphics.RectF(l, t, r, b)
+    val circleRect = RectF(l, t, r, b)
 
     // dibuja la foto SOLO dentro del círculo (clip)
-    val save = c.save()
-    val path = android.graphics.Path().apply { addOval(circleRect, android.graphics.Path.Direction.CW) }
-    c.clipPath(path)
-    val dest = centerCropDest(outW, outH, photo) // mismo FILL_CENTER que el preview
-    c.drawBitmap(photo, null, dest, null)
-    c.restoreToCount(save)
+    c.withSave {
+        val path = android.graphics.Path().apply {
+            addOval(circleRect, android.graphics.Path.Direction.CW)
+        }
+        c.clipPath(path)
+        val dest = centerCropDest(outW, outH, photo) // mismo FILL_CENTER que el preview
+        c.drawBitmap(photo, null, dest, null)
+    }
 
     // aro
     val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
